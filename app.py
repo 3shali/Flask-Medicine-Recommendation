@@ -34,11 +34,13 @@ def home():
 @app.route("/recommend", methods=["GET"])
 def recommend():
     condition = request.args.get("condition")
+
     if not condition:
-        return jsonify({"error": "Please provide a condition."}), 400
+        return jsonify({"error": "Please provide a condition."}), 400  # Return error if no condition
 
     try:
         results = train_df[train_df['condition'].str.contains(condition, case=False, na=False)].copy()
+
         if results.empty:
             return jsonify({"message": "No medicines found for this condition."})
 
@@ -49,8 +51,9 @@ def recommend():
         return jsonify(recommendations)
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500  # Show exact error in JSON response
 
 # ✅ Run Flask on Render
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
