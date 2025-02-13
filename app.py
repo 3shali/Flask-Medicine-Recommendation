@@ -1,9 +1,9 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, render_template, jsonify
 import pandas as pd
 import torch
 from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
 # Load dataset
 train_df = pd.read_csv("train.csv").dropna(subset=["condition", "review", "rating"])
@@ -16,22 +16,21 @@ model = DistilBertForSequenceClassification.from_pretrained("distilbert-base-unc
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
-# Function to classify sentiment using DistilBERT
+# Function for sentiment analysis
 def analyze_sentiment_distilbert(text):
     inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512).to(device)
     with torch.no_grad():
         outputs = model(**inputs)
-    
-    logits = outputs.logits
-    probabilities = torch.nn.functional.softmax(logits, dim=-1)
+    probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
     positive_score = probabilities[0][1].item()
-    
     return "positive" if positive_score > 0.6 else "negative"
 
+# ✅ Serve the Web UI
 @app.route("/")
 def home():
-    return jsonify({"message": "Welcome to Medicine Recommendation API!"})
+    return render_template("index.html")
 
+# ✅ API Endpoint for Medicine Recommendation
 @app.route("/recommend", methods=["GET"])
 def recommend():
     condition = request.args.get("condition")
@@ -52,5 +51,6 @@ def recommend():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ✅ Run Flask on Render
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
