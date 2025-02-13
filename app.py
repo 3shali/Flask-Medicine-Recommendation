@@ -1,46 +1,51 @@
-from flask import Flask, request, render_template, jsonify
-from pyngrok import ngrok
+from flask import Flask, request, jsonify
 import pandas as pd
 import torch
 from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
 
-# Initialize Flask app
 app = Flask(__name__)
 
+# Load dataset
+train_df = pd.read_csv("train.csv").dropna(subset=["condition", "review", "rating"])
 
-# Start Ngrok for public access
-flask_tunnel = ngrok.connect(5000, "http")
-flask_url = flask_tunnel.public_url
-print(f"🚀 Flask API is Live at: {flask_url}")
+# Load DistilBERT model
+tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
+model = DistilBertForSequenceClassification.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
+
+# Use GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+# Function to classify sentiment using DistilBERT
+def analyze_sentiment_distilbert(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512).to(device)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    logits = outputs.logits
+    probabilities = torch.nn.functional.softmax(logits, dim=-1)
+    positive_score = probabilities[0][1].item()
+    
+    return "positive" if positive_score > 0.6 else "negative"
 
 @app.route("/")
 def home():
-    return render_template("index.html")
+    return jsonify({"message": "Welcome to Medicine Recommendation API!"})
 
 @app.route("/recommend", methods=["GET"])
 def recommend():
     condition = request.args.get("condition")
-
     if not condition:
         return jsonify({"error": "Please provide a condition."}), 400
 
     try:
         results = train_df[train_df['condition'].str.contains(condition, case=False, na=False)].copy()
-
         if results.empty:
             return jsonify({"message": "No medicines found for this condition."})
 
-        # Analyze sentiment using DistilBERT
-        results["sentiment_label"], results["sentiment_score"] = zip(*results["review"].apply(analyze_sentiment_distilbert))
-
-        # Sort by sentiment score
-        results = results.sort_values(by="sentiment_score", ascending=False)
-
-        # Remove duplicate medicines
-        results = results.drop_duplicates(subset=['drugName'])
-
-        # Convert to JSON
-        recommendations = results[['drugName', 'rating', 'sentiment_label', 'sentiment_score', 'usefulCount', 'review']].head(10).to_dict(orient="records")
+        results["sentiment_label"] = results["review"].apply(analyze_sentiment_distilbert)
+        results = results.sort_values(by="rating", ascending=False).drop_duplicates(subset=['drugName'])
+        recommendations = results[['drugName', 'rating', 'sentiment_label', 'review']].head(10).to_dict(orient="records")
 
         return jsonify(recommendations)
 
@@ -48,4 +53,4 @@ def recommend():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=10000)
