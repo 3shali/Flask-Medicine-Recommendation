@@ -2,6 +2,7 @@ from flask import Flask, request, render_template, jsonify
 import pandas as pd
 import torch
 from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
+import re
 
 app = Flask(__name__, template_folder="templates")
 
@@ -12,9 +13,9 @@ train_df = pd.read_csv("train.csv").dropna(subset=["condition", "review", "ratin
 tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
 model = DistilBertForSequenceClassification.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
 
-# Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
+model.half()  # ✅ Use half-precision (faster inference)
 
 # Function for sentiment analysis
 def analyze_sentiment_distilbert(text):
@@ -31,27 +32,37 @@ def home():
     return render_template("index.html")
 
 # ✅ API Endpoint for Medicine Recommendation
+
+
 @app.route("/recommend", methods=["GET"])
 def recommend():
     condition = request.args.get("condition")
 
     if not condition:
-        return jsonify({"error": "Please provide a condition."}), 400  # Return error if no condition
+        return jsonify({"error": "Please provide a condition."}), 400
 
     try:
-        results = train_df[train_df['condition'].str.contains(condition, case=False, na=False)].copy()
+        # ✅ Use regex-based filtering for faster matching
+        pattern = re.compile(re.escape(condition), re.IGNORECASE)
+        results = train_df[train_df['condition'].str.match(pattern, na=False)].copy()
 
         if results.empty:
             return jsonify({"message": "No medicines found for this condition."})
 
-        results["sentiment_label"] = results["review"].apply(analyze_sentiment_distilbert)
-        results = results.sort_values(by="rating", ascending=False).drop_duplicates(subset=['drugName'])
+        # ✅ Optimize Sentiment Analysis Processing
+        reviews = results["review"].tolist()
+        sentiments = [analyze_sentiment_distilbert(review) for review in reviews]
+        results["sentiment_label"] = [s[0] for s in sentiments]
+        results["sentiment_score"] = [s[1] for s in sentiments]
+
+        # ✅ Sort and return recommendations
+        results = results.sort_values(by=["rating", "sentiment_score"], ascending=[False, False])
         recommendations = results[['drugName', 'rating', 'sentiment_label', 'review']].head(10).to_dict(orient="records")
 
         return jsonify(recommendations)
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500  # Show exact error in JSON response
+        return jsonify({"error": str(e)}), 500
 
 # ✅ Run Flask on Render
 if __name__ == "__main__":
